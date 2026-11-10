@@ -22,6 +22,8 @@
 #include <utility>
 #include <cstring>
 
+#include "strata/platform/memory.hpp"
+
 // (not in a SYCL build: its CUDA names are a compatibility layer without the PCI ids NVML is matched by)
 #if defined(_WIN32) && !defined(STRATA_EC_NO_VMM) && !defined(SYCL_LANGUAGE_VERSION)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -135,6 +137,14 @@ size_t device_free_bytes() {
             if (avail > head && avail - head > free_b) free_b = (size_t) (avail - head);
         }
     }
+
+    // #ZFS-ARC: on Linux, the reclaimable ARC bytes are extra headroom the kernel can hand back under pressure.
+    // MemAvailable (above) already counts most reclaimable page cache, so this is a FLOOR, not an addition: if
+    // the ARC share is larger than what MemAvailable reports, trust it. 0 when ZFS is absent or FNX_NO_ZFS_ARC=1.
+    #if defined(__linux__) && !defined(STRATA_HIP_GFX906)
+    size_t arc_reclaimable = strata::platform::zfs_arc_reclaimable_bytes();
+    if (arc_reclaimable > free_b) free_b = arc_reclaimable;
+    #endif
 #endif
 #if defined(STRATA_EC_NVML_FREE)
     static const bool device_wide = [] {

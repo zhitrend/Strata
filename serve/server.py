@@ -8160,6 +8160,28 @@ def make_handler(svc: Service):
                         data.append({"id": svc.images.model, "object": "model", "status": {"value": "loaded"},
                                      "architecture": {"input_modalities": ["text"], "output_modalities": ["image"]}})
                     self._json(200, {"object": "list", "data": data})
+            elif path.startswith("/v1/models/") and path != "/v1/models":
+                if self._authorized():
+                    model_id = path[len("/v1/models/"):]
+                    loaded = svc.loaded()
+                    model = svc.model
+                    aliases = svc.aliases
+                    if model_id == model or model_id in aliases:
+                        model_info = {
+                            "id": model_id,
+                            "object": "model",
+                            "status": {"value": "loaded" if loaded else "unloaded"},
+                            "meta": {"n_ctx": svc.reported_ctx()},
+                            "architecture": {
+                                "input_modalities": ["text", "image"] if svc.vision is not None else ["text"],
+                                "output_modalities": ["text"]
+                            }
+                        }
+                        if model_id in aliases:
+                            model_info["alias_of"] = model
+                        self._json(200, model_info)
+                    else:
+                        self._json(404, {"error": {"message": f"model '{model_id}' not found", "type": "not_found_error"}})
             elif path == "/props":
                 if self._authorized():
                     self._props()

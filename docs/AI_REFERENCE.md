@@ -99,6 +99,10 @@ Default local server address: `http://127.0.0.1:8080`. The configured port and a
 | OpenAI Responses | `http://127.0.0.1:8080/v1` | `POST /v1/responses` |
 | Anthropic Messages | `http://127.0.0.1:8080` | `POST /v1/messages` |
 
+Model discovery follows the OpenAI shape: `GET /v1/models` lists them, and `GET /v1/models/{model_id}` returns one
+(the server's model or one of its aliases; an unknown id is a `404` with `{"error": {"type": "not_found_error", ...}}`).
+An alias answer carries `alias_of`.
+
 Use the actual configured API key when authentication is enabled. See [API details](DETAILS.md#using-it).
 The [connection registry](../strata_cli/launch/harness.py) supplies these adapters:
 

@@ -15,6 +15,9 @@
 #include "kernels.hpp"
 #include "model.hpp"
 
+#include "strata/core/degradation.hpp"
+#include "strata/core/memory_arbiter.hpp"
+
 namespace fnx {
 
 // the engine has no room for what a call asks (K/V pool pages, the context): thrown before the call changes anything,
@@ -396,6 +399,16 @@ private:
     static constexpr int PF_PASS = 8, PF_SETS = 2 * PF_PASS;
     int pass_rows_ = 0;
     int pf_pass_pick_ = 0;   // chunks a pass the constructor picked from the free VRAM (0: the rule in prefill_alloc)
+    // FNX_ARBITER: the VRAM budget split between the expert cache and the K/V pool (MemoryBudgetArbiter) and the
+    // degradation levels it drives (DegradationStateMachine). Read once; off (nullptr) keeps today's behaviour
+    bool arbiter_on_ = false;
+    strata::core::MemoryBudgetArbiter arbiter_;
+    strata::core::DegradationStateMachine degradation_;
+    size_t arb_low_water_ = 0, arb_high_water_ = 0;   // bytes of free VRAM the low/high marks stand for
+    unsigned long arb_tick_ = 0;
+    // a tick: free VRAM per card, the expert working set, the K/V pages, -> the plan applied (level + budgets)
+    strata::core::BudgetPlan arb_plan_{};
+    void arbiter_tick();
     struct PfChunk {
         std::vector<int> tokens;
         int after, set;

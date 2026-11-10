@@ -257,4 +257,45 @@ ProcIo proc_io_sample() {
     return r;
 }
 
+// #ZFS-ARC: parse /proc/spl/kstat/zfs/arcstats for its `size` line, return the reclaimable portion (80%).
+// The file's first two lines are a header; a data line is "size 4 <value>".  Returns 0 when unreadable or no positive
+// `size`.
+size_t zfs_arc_reclaimable_bytes_from(const char* arcstats_path) {
+#if defined(__linux__)
+    if (arcstats_path == nullptr) return 0;
+    std::FILE* f = std::fopen(arcstats_path, "r");
+    if (!f) return 0;
+    char line[256];
+    unsigned long long arc_size = 0;
+    while (std::fgets(line, sizeof line, f)) {
+        // a data line names the stat, then its type width, then the value: "size 4 123456"
+        unsigned long long v = 0;
+        if (std::sscanf(line, "size %*d %llu", &v) == 1) {
+            arc_size = v;
+            break;
+        }
+    }
+    std::fclose(f);
+    if (arc_size == 0) return 0;
+    // ARC reclaimable ~80% (keep 20% for hot metadata)
+    return static_cast<size_t>(arc_size * 0.8);
+#else
+    return 0;
+#endif
+}
+
+// #ZFS-ARC: read ARC size from /proc/spl/kstat/zfs/arcstats, return reclaimable portion (80%).
+// Returns 0 when not on Linux, ZFS not present, file unreadable, or FNX_NO_ZFS_ARC=1.
+size_t zfs_arc_reclaimable_bytes() {
+    // Honor disable flag first (fast path)
+    const char* no_zfs_arc = std::getenv("FNX_NO_ZFS_ARC");
+    if (no_zfs_arc != nullptr && std::atoi(no_zfs_arc) != 0) return 0;
+
+#if defined(__linux__)
+    return zfs_arc_reclaimable_bytes_from("/proc/spl/kstat/zfs/arcstats");
+#else
+    return 0;
+#endif
+}
+
 }  // namespace strata::platform

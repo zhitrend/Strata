@@ -445,6 +445,10 @@ if(STRATA_BUILD_TESTS)
   add_executable(host_limits_test tests/platform/host_limits_test.cpp)
   target_include_directories(host_limits_test PRIVATE include)
   add_test(NAME host_limits_test COMMAND host_limits_test)
+  # #ZFS-ARC: the arcstats parser on fixture files - no real ZFS, no GPU
+  add_executable(zfs_arc_test tests/platform/zfs_arc_test.cpp src/platform/memory.cpp)
+  target_include_directories(zfs_arc_test PRIVATE include)
+  add_test(NAME zfs_arc_test COMMAND zfs_arc_test)
   # #4733: an engine started at Low I/O priority goes back to Normal (Windows; else skips)
   add_executable(io_priority_test tests/platform/io_priority_test.cpp src/platform/io_priority.cpp)
   target_include_directories(io_priority_test PRIVATE include)
@@ -747,7 +751,10 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
     src/core/remote_expert_opt.cu
     src/core/expert_cache.cpp src/core/native_head.cpp src/core/native_dense.cpp src/core/verify.cpp src/core/mtp.cpp src/core/dflash2.cpp
     src/core/conversation_snapshot.cpp src/core/conversation_state.cpp src/core/conversation_memory.cpp src/core/peer_experts.cpp
-    src/core/arch_defaults.cpp src/core/nv_defaults.cpp src/core/vmm.cpp src/core/conversation_file.cpp)
+    src/core/arch_defaults.cpp src/core/nv_defaults.cpp src/core/vmm.cpp src/core/conversation_file.cpp
+    src/core/memory_arbiter.cpp src/core/degradation.cpp
+    src/core/expert_event_sync.cpp src/core/kv_pipeline.cpp src/core/residency_manager.cpp
+    src/core/cluster_mmap.cpp src/core/expert_prefetcher.cpp)
   target_include_directories(strata_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
   target_link_libraries(strata_engine PUBLIC strata_core strata_kernels strata_kernels_cpu ${_strata_gpu_runtime_target})
   if(STRATA_BUILD_TESTS AND STRATA_ENABLE_CUDA AND NOT STRATA_HIP_GFX906)
@@ -763,6 +770,51 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
     target_link_libraries(exchange_storage_test PRIVATE Threads::Threads)
     add_test(NAME exchange_storage_test COMMAND exchange_storage_test)
     set_tests_properties(exchange_storage_test PROPERTIES TIMEOUT 60)
+  endif()
+  # MemoryBudgetArbiter::tick and DegradationStateMachine: the hysteresis, the proportional budget and the level
+  # queries - CPU only, no GPU
+  if(STRATA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/memory_arbiter_test.cpp")
+    add_executable(memory_arbiter_test tests/core/memory_arbiter_test.cpp
+                   src/core/memory_arbiter.cpp src/core/degradation.cpp)
+    target_include_directories(memory_arbiter_test PRIVATE include)
+    add_test(NAME memory_arbiter_test COMMAND memory_arbiter_test)
+    set_tests_properties(memory_arbiter_test PROPERTIES TIMEOUT 60)
+  endif()
+
+  # Phase 2 core planners, all header-independent of any device and CPU-only:
+  # the per-expert event ring (#expert-event-sync), the cross-tier KV pipeline (#kv-pipeline), the Greedy-Dual
+  # residency manager with anchor protection (#residency), the STRCM cluster manifest reader (#cluster-mmap) and
+  # the predictive expert prefetcher (#prefetch)
+  if(STRATA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/expert_event_sync_test.cpp")
+    add_executable(expert_event_sync_test tests/core/expert_event_sync_test.cpp src/core/expert_event_sync.cpp)
+    target_include_directories(expert_event_sync_test PRIVATE include)
+    add_test(NAME expert_event_sync_test COMMAND expert_event_sync_test)
+    set_tests_properties(expert_event_sync_test PROPERTIES TIMEOUT 60)
+  endif()
+  if(STRATA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/kv_pipeline_test.cpp")
+    add_executable(kv_pipeline_test tests/core/kv_pipeline_test.cpp src/core/kv_pipeline.cpp)
+    target_include_directories(kv_pipeline_test PRIVATE include)
+    add_test(NAME kv_pipeline_test COMMAND kv_pipeline_test)
+    set_tests_properties(kv_pipeline_test PROPERTIES TIMEOUT 60)
+  endif()
+  if(STRATA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/residency_manager_test.cpp")
+    add_executable(residency_manager_test tests/core/residency_manager_test.cpp src/core/residency_manager.cpp)
+    target_include_directories(residency_manager_test PRIVATE include)
+    add_test(NAME residency_manager_test COMMAND residency_manager_test)
+    set_tests_properties(residency_manager_test PROPERTIES TIMEOUT 60)
+  endif()
+  if(STRATA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/cluster_mmap_test.cpp")
+    add_executable(cluster_mmap_test tests/core/cluster_mmap_test.cpp src/core/cluster_mmap.cpp)
+    target_include_directories(cluster_mmap_test PRIVATE include)
+    add_test(NAME cluster_mmap_test COMMAND cluster_mmap_test)
+    set_tests_properties(cluster_mmap_test PROPERTIES TIMEOUT 60)
+  endif()
+  if(STRATA_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/core/expert_prefetcher_test.cpp")
+    add_executable(expert_prefetcher_test tests/core/expert_prefetcher_test.cpp
+                   src/core/expert_prefetcher.cpp src/core/degradation.cpp)
+    target_include_directories(expert_prefetcher_test PRIVATE include)
+    add_test(NAME expert_prefetcher_test COMMAND expert_prefetcher_test)
+    set_tests_properties(expert_prefetcher_test PROPERTIES TIMEOUT 60)
   endif()
 
   # available_host_bytes(): MemAvailable, cgroup limits and the operator's --memory-limit-mib cap on fixture directories

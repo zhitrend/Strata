@@ -469,7 +469,34 @@ void Engine::dump_dev(const std::string& name, int layer, const float* p, int T,
     dump(name, layer, T, n, h);
 }
 
+// FNX_ARBITER: one tick of the VRAM budget arbiter from the cards' free VRAM now, the experts' resident bytes and
+// the K/V pool's pages; the plan's level is applied to the degradation machine. Cheap (a cudaMemGetInfo a card) and
+// only run between windows, never inside a capture. A failure to read one card leaves the last plan in place.
+void Engine::arbiter_tick() {
+    if (!arbiter_on_) return;
+    size_t free_min = SIZE_MAX;
+    for (int c = 0; c < NCARD; ++c) {
+        ck(cudaSetDevice(m_.cards[c].dev), "set");
+        size_t f = 0, t = 0;
+        if (cudaMemGetInfo(&f, &t) != cudaSuccess) {
+            cudaGetLastError();
+            return;
+        }
+        free_min = std::min(free_min, f);
+    }
+    strata::core::ExpertCacheCost ec;
+    ec.working_set_bytes = (size_t) m_.cards[0].ec.bytes();
+    ec.target_bytes = ec.working_set_bytes;
+    strata::core::KvPagesCost kc;
+    kc.working_set_pages = (int) free_pages_.size() + arena_base_;
+    kc.target_pages = kc.working_set_pages;
+    arb_plan_ = arbiter_.tick(free_min, ec, kc);
+    degradation_.apply_level((strata::core::DegradationLevel) arb_plan_.degradation_level);
+    ++arb_tick_;
+}
+
 std::vector<int> Engine::window(const std::vector<int>& tokens) {
+    arbiter_tick();
     std::vector<int> out = verify(tokens);
     commit((int) tokens.size());
     return out;
@@ -873,6 +900,7 @@ std::vector<int> Engine::verify(const std::vector<int>& tokens) {
 }
 
 std::vector<int> Engine::step(const std::vector<int>& lanes, const std::vector<int>& tokens) {
+    arbiter_tick();
     const int T = (int) lanes.size();
     if (T < 1 || T > MAXT || (int) tokens.size() != T) throw std::runtime_error("step: 1..MAXT lanes, a token each");
     if (!pending_.empty() || !rows_pending_.lanes.empty()) throw std::runtime_error("step: the current lane's window is not committed");

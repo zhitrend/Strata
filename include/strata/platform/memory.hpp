@@ -94,4 +94,12 @@ struct ProcIo {
 };
 ProcIo proc_io_sample();
 
+/// #ZFS-ARC: bytes reclaimable from ZFS ARC (size * 0.8).  Returns 0 when not on Linux, ZFS not present, or unreadable.
+/// Controlled by FNX_NO_ZFS_ARC=1 to disable.
+size_t zfs_arc_reclaimable_bytes();
+/// The same, reading the ARC stats from `arcstats_path` (the default is /proc/spl/kstat/zfs/arcstats).  The disable
+/// check and the platform rules are the caller's; this only parses the file's `size` line.  0 when it cannot be read
+/// or holds no positive `size`.  For the tests.
+size_t zfs_arc_reclaimable_bytes_from(const char* arcstats_path);
+
 }  // namespace strata::platform

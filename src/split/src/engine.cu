@@ -455,6 +455,30 @@ Engine::Engine(Model& m, int max_ctx, int lanes) : m_(m), max_ctx_(max_ctx) {
             throw std::runtime_error("FNX_RING_TAG_START: want 1.." + std::to_string(TAG_END - 1) + ", got " + std::to_string(v));
         tag_max_ = (unsigned) v;
     }
+    // FNX_ARBITER=1: arbitrate the free VRAM between the expert cache and the K/V pool every window, and drive the
+    // degradation levels from it (memory_arbiter.hpp, degradation.hpp). Its water marks are the free VRAM of the
+    // smallest card as a fraction of that card's total: FNX_ARBITER_LOW / FNX_ARBITER_HIGH (percent, defaults 15 / 40).
+    {
+        const char* on = std::getenv("FNX_ARBITER");
+        arbiter_on_ = on != nullptr && std::strcmp(on, "0") != 0;
+        if (arbiter_on_) {
+            size_t total_min = SIZE_MAX;
+            for (int c = 0; c < NCARD; ++c) {
+                ck(cudaSetDevice(m_.cards[c].dev), "set");
+                size_t f = 0, t = 0;
+                ck(cudaMemGetInfo(&f, &t), "cudaMemGetInfo");
+                total_min = std::min(total_min, t);
+            }
+            long low = 15, high = 40;
+            if (std::getenv("FNX_ARBITER_LOW")) low = env_int("FNX_ARBITER_LOW", low);
+            if (std::getenv("FNX_ARBITER_HIGH")) high = env_int("FNX_ARBITER_HIGH", high);
+            arb_low_water_ = (size_t) ((double) total_min * (double) low / 100.0);
+            arb_high_water_ = (size_t) ((double) total_min * (double) high / 100.0);
+            arbiter_.set_water_marks(arb_low_water_, arb_high_water_);
+            std::fprintf(stderr, "fnx: vram arbiter: low %ld MiB (%ld%%), high %ld MiB (%ld%%)\n",
+                         (long) (arb_low_water_ >> 20), low, (long) (arb_high_water_ >> 20), high);
+        }
+    }
 }
 
 void Engine::clear_rings() {

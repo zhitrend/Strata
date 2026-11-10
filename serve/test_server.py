@@ -5141,6 +5141,29 @@ class ModelAliases(unittest.TestCase):
         self.assertEqual(data[1]["alias_of"], "qwen3.8-flash-next-iq3_xxs")
         self.assertEqual(self.get("/props?model=local-model")["model_alias"], "qwen3.8-flash-next-iq3_xxs")
 
+    def test_model_detail_returns_the_model(self):
+        body = self.get("/v1/models/qwen3.8-flash-next-iq3_xxs")
+        self.assertEqual(body["id"], "qwen3.8-flash-next-iq3_xxs")
+        self.assertEqual(body["object"], "model")
+        self.assertEqual(body["status"]["value"], "loaded")
+        self.assertEqual(body["meta"]["n_ctx"], self.svc.reported_ctx())
+        self.assertIn("text", body["architecture"]["input_modalities"])
+        self.assertNotIn("alias_of", body)
+
+    def test_model_detail_answers_an_alias(self):
+        body = self.get("/v1/models/qwen")
+        self.assertEqual(body["id"], "qwen")
+        self.assertEqual(body["alias_of"], "qwen3.8-flash-next-iq3_xxs")
+
+    def test_model_detail_unknown_is_a_404_in_openai_shape(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get("/v1/models/no-such-model")
+        err = cm.exception
+        self.assertEqual(err.code, 404)
+        body = json.loads(err.read())
+        self.assertEqual(body["error"]["type"], "not_found_error")
+        self.assertIn("no-such-model", body["error"]["message"])
+
     def test_requests_are_answered_under_the_alias(self):
         msgs = [{"role": "user", "content": "hi"}]
         for asked, want in (("qwen", "qwen"), ("local-model", "local-model"),

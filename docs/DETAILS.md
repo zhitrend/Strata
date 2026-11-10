@@ -239,6 +239,43 @@ reported and, for files in your own folder, never deleted. Without `uvx`, `pip i
 `STRATA_KV_HOST_REGISTER=1` forces the KV host copy to be pinned with `cudaHostRegister` (the order WSL2 uses
 automatically); `0` forces `cudaHostAlloc` first.
 
+### Free-memory sources and the VRAM budget arbiter
+
+- `FNX_NO_ZFS_ARC=1` turns off the ZFS ARC reading (`zfs_arc_reclaimable_bytes`, src/platform/memory.cpp): the free
+  device memory then stops counting the ARC's reclaimable share. On Linux with ZFS the reading adds about 80% of
+  the ARC's `size` (its value in `/proc/spl/kstat/zfs/arcstats`) to the free memory `device_free_bytes()` reports.
+  It reads 0 elsewhere, and the 20% kept back is for the ARC's hot metadata. The ARC figure is added to the
+  `MemAvailable` figure, so it is not counted twice.
+- `FNX_ARBITER=1` (the split engine, `src/split/src/engine.cu`) splits the free VRAM every window between the
+  expert cache and the K/V pool, and drives the degradation levels (`include/strata/core/degradation.hpp`). It is off
+  by default, so the default path is unchanged. `FNX_ARBITER_LOW` and `FNX_ARBITER_HIGH` are the low and high water
+  marks as a percent of the smallest card's total VRAM (defaults 15 and 40): below the low mark the engine steps one
+  level down after three windows, above the high mark it steps one level back after five. Level 0 is normal; 1 shrinks
+  the prefetch window, 2 keeps only high-confidence prefetch, 3 stops the n-gram prefetch, 4 stops prefetch,
+  5 freezes low-priority sessions. Levels 3 and up may keep the K/V in RAM. This is opt-in and unmeasured here: turn
+  it on and compare on the hardware you run.
+
+The arbiter and degradation state machine sit under a set of small, device-free planners in `src/core`. Each is a
+plain C++ library with a unit test that runs on a CPU and needs no GPU, and each is wired into the split engine only
+behind a flag (the wiring gate ships with the engine change, so a default build is byte-identical to the last release):
+
+- `MemoryBudgetArbiter::initial_budgets` and `::rebalance` (include/strata/core/memory_arbiter.hpp) split the free VRAM
+  60% expert / 30% K/V / 10% staging, then each window move at most 5% of the total toward the pool with the higher
+  sliding miss cost, and only after the same direction held for three windows. K/V never spills to the SSD: its budget
+  only decides VRAM versus pinned RAM. We have not measured the split on a card here; 60/30/10 is a starting point.
+- `ExpertPrefetcher` (include/strata/core/expert_prefetcher.hpp) plans, and does not perform, I/O: it ranks the
+  prefill's routed experts by frequency and hands the top-K as `(layer, expert)` keys for the caller to stream. It
+  obeys the degradation machine's window, confidence and on/off, so at level 4 it plans nothing. Unit-tested on a CPU;
+  the hit rate is unmeasured until the engine runs it.
+- `ExpertEventSync`, `KvPipeline`, `ResidencyManager` and `ClusterMmapReader` are the same shape: a small header and a
+  CPU-tested implementation with no CUDA, Metal or SYCL type in it. Their tests are in `tests/core` and are registered
+  by CMake's test block.
+
+`tools/cluster_experts.py` writes the binary `STRCM` manifest that `ClusterMmapReader` reads (magic `STRCM`, version 1,
+then the layer and expert counts and the cluster and anchor arrays; the reader falls back to the per-expert layout
+when the file is missing or a foreign version). It clusters the co-activation CSV or `.npz` with Louvain when networkx
+is installed and connected components otherwise, and writes a matching human-readable `.json` beside it.
+
 ### Low-RAM modes (chosen by setup)
 
 Normally all of a model's experts are copied into RAM (23-50 GB, pinned) and the GPU holds a copy of the most-used ones.
