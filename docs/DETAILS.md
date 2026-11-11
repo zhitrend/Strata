@@ -246,14 +246,19 @@ automatically); `0` forces `cudaHostAlloc` first.
   the ARC's `size` (its value in `/proc/spl/kstat/zfs/arcstats`) to the free memory `device_free_bytes()` reports.
   It reads 0 elsewhere, and the 20% kept back is for the ARC's hot metadata. The ARC figure is added to the
   `MemAvailable` figure, so it is not counted twice.
-- `FNX_ARBITER=1` (the split engine, `src/split/src/engine.cu`) splits the free VRAM every window between the
-  expert cache and the K/V pool, and drives the degradation levels (`include/strata/core/degradation.hpp`). It is off
-  by default, so the default path is unchanged. `FNX_ARBITER_LOW` and `FNX_ARBITER_HIGH` are the low and high water
-  marks as a percent of the smallest card's total VRAM (defaults 15 and 40): below the low mark the engine steps one
-  level down after three windows, above the high mark it steps one level back after five. Level 0 is normal; 1 shrinks
-  the prefetch window, 2 keeps only high-confidence prefetch, 3 stops the n-gram prefetch, 4 stops prefetch,
-  5 freezes low-priority sessions. Levels 3 and up may keep the K/V in RAM. This is opt-in and unmeasured here: turn
-  it on and compare on the hardware you run.
+- `FNX_ARBITER=1` (the split engine, `src/split/src/engine.cu`) computes the arbiter plan every window and applies its
+  degradation level to the state machine (`include/strata/core/degradation.hpp`). It is off by default, so the default
+  path is unchanged. `FNX_ARBITER_LOW` and `FNX_ARBITER_HIGH` are the low and high water marks as a percent of the
+  smallest card's total VRAM (defaults 15 and 40): with free VRAM below the low mark the engine steps one level down
+  after three windows, above the high mark it steps one level back after five. Level 0 is normal; 1 shrinks the
+  prefetch window, 2 keeps only high-confidence prefetch, 3 stops the n-gram prefetch, 4 stops prefetch, 5 freezes
+  low-priority sessions.
+  **What is wired today:** the plan's level is applied to the degradation machine, and the arbiter's per-pool byte
+  budgets (`target_expert_bytes`, `target_kv_pages`) are computed but not yet consumed by any inference path, and the
+  machine's level is not yet read by the expert loader, the prefetcher or the scheduler. So with `FNX_ARBITER=1` the
+  engine tracks the level; it does not yet act on it to move budget, shrink a prefetch window or freeze a session.
+  Wiring the level into those paths, and acting on the byte budgets, is the next step. This is opt-in and
+  unmeasured here: turn it on and compare on the hardware you run.
 
 The arbiter and degradation state machine sit under a set of small, device-free planners in `src/core`. Each is a
 plain C++ library with a unit test that runs on a CPU and needs no GPU, and each is wired into the split engine only

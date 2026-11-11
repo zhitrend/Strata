@@ -155,14 +155,40 @@ def write_strcm(path, n_layers, n_expert, clusters, expert_bytes, anchors):
         fh.write(data)
 
 
+def write_json(path, n_layers, n_experts, clusters, expert_bytes, anchors):
+    cluster_docs = []
+    byte_offset = 0
+    for cid, members in enumerate(clusters):
+        cluster_docs.append({
+            "id": cid,
+            "byte_offset": byte_offset,
+            "byte_length": expert_bytes * len(members),
+            "members": [[flat // n_experts, flat % n_experts] for flat in members],
+        })
+        byte_offset += expert_bytes * len(members)
+    doc = {
+        "format": "STRCM",
+        "version": VERSION,
+        "n_layers": n_layers,
+        "n_experts": n_experts,
+        "expert_bytes": expert_bytes,
+        "clusters": cluster_docs,
+        "anchors": [[flat // n_experts, flat % n_experts] for flat in anchors],
+    }
+    with open(path, "w") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+
+
 def main(argv=None):
     args = parse_args(argv)
     edges = load_coactivation(args.input, args.layers, args.experts, "counts")
     clusters = cluster_nodes(args.layers * args.experts, edges, args.min_weight)
     anchors = max(clusters, key=len) if clusters else []
-    write_strcm(args.out + ".strcm", args.layers, args.experts, clusters,
-                args.expert_bytes, sorted(anchors))
-    print(f"wrote {len(clusters)} clusters, {len(anchors)} anchors to {args.out}.strcm")
+    anchors = sorted(anchors)
+    write_strcm(args.out + ".strcm", args.layers, args.experts, clusters, args.expert_bytes, anchors)
+    write_json(args.out + ".json", args.layers, args.experts, clusters, args.expert_bytes, anchors)
+    print(f"wrote {len(clusters)} clusters, {len(anchors)} anchors to {args.out}.strcm and {args.out}.json")
     return 0
 
 
